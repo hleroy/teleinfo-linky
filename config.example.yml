@@ -1,0 +1,16 @@
+debug: false               # true permet de logger plus d'information en cas de problème
+
+linky:
+  location: 'Votre ville'
+  strip_address: false     # Envoie-t-on l'adresse du Linky (champ ADCO) dans InfluxDB ?
+  legacy_mode: true        # Mode TIC historique: true, sinon false
+
+raspberry:
+  stty_port: '/dev/ttyS0'  # Port série du Raspberry Pi
+
+influxdb:
+  send_data: false         # false permet de tester le script en local sans envoyer de données
+  url: https://url-serveur-influxdb
+  bucket: teleinfo
+  token: 
+  org: 

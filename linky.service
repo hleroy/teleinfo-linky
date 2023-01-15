@@ -1,0 +1,17 @@
+# Service Systemd pour Téléinfo Linky
+
+[Unit]
+Description=Téléinfo Linky
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/pi/linky/linky.py
+WorkingDirectory=/home/pi/linky/
+Restart=on-failure
+TimeoutStopSec=1
+
+[Install]
+WantedBy=default.target

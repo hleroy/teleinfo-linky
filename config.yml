@@ -1,0 +1,16 @@
+debug: true
+
+linky:
+  location: 'Garches'
+  strip_address: false
+  legacy_mode: true
+
+raspberry:
+  stty_port: '/dev/ttyS0'
+
+influxdb:
+  send_data: false
+  url: https://influxdb.hleroy.com
+  bucket: teleinfo
+  token: mj7EVwsJqzwb6ndXtPdHgwzPqQSxWkE4UX4xfOG94ax5psTqRxJMWyHjmbxLl2yMc5h72MIb61x4v2atMyBloA==
+  org: hleroy
