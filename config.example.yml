@@ -1,0 +1,43 @@
+debug: false                   # true permet de logger plus d'information en cas de problème
+
+linky:
+  location: 'Votre ville'
+  legacy_mode: true            # Mode TIC historique = true, sinon false
+  checksum_method: 1           # Mode de calcul du checksum : 1 ou 2, se référer à la notice ENEDIS
+  keys: [ISOUSC, BASE, IINST]  # Liste des étiquettes à récupérer via la téléinfo
+
+raspberry:
+  stty_port: '/dev/ttyAMA0'    # Port série du Raspberry Pi
+
+influxdb:
+  send_data: false             # false permet de tester le script en local sans envoyer de données
+  url: https://url-serveur-influxdb
+  bucket: teleinfo
+  token: 
+  org: 
+
+# Liste des étiquettes transmises par la Téléinfo Client (TIC)
+
+# ADCO     : Adresse du compteur
+# OPTARIF  : Option tarifaire choisie
+# ISOUSC   : Intensité souscrite
+# BASE     : Index option Base
+# HCHC     : Index Heures Creuses
+# HCHP     : Index Heures Pleines
+# EJPHN    : Index option EJP Heures Normales
+# EJPHPM   : Index option EJP Heures de Pointe Mobile
+# BBRHCJB  : Index option Tempo Heures Creuses Jours Bleus
+# BBRHPJB  : Index option Tempo Heures Pleines Jours Bleus
+# BBRHCJW  : Index option Tempo Heures Creuses Jours Blancs
+# BBRHPJW  : Index option Tempo Heures Pleines Jours Blancs
+# BBRHCJR  : Index option Tempo Heures Creuses Jours Rouges
+# BBRHPJR  : Index option Tempo Heures Pleines Jours Rouges
+# PEJP     : Préavis Début EJP
+# PTEC     : Période Tarifaire en cours
+# DEMAIN   : Couleur du lendemain
+# IINST    : Intensité Instantanée
+# ADPS     : Avertissement de Dépassement De Puissance Souscrite
+# IMAX     : Intensité maximale appelée
+# PAPP     : Puissance apparente
+# HHPHC    : Horaire Heures Pleines Heures Creuses
+# MOTDETAT : Mot d'état du compteur
