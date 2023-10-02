@@ -79,7 +79,7 @@ Installation des dépendances (`PyYAML`, `pySerial` et `influxdb-client`)
 
 Création des répertoires
 
-    $ mkdir ~/linky ~/.config/systemd/user
+    $ mkdir -p ~/linky ~/.config/systemd/user
 
 Copie des fichiers depuis Github
 
