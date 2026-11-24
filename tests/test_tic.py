@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 import pytest
 
 from teleinfo_linky.config import Config
-from teleinfo_linky.tic import DELAI_REOUVERTURE, decouper_groupe, lire_teleinfo, lire_trames, verifier_checksum
+from teleinfo_linky.tic import (DELAI_REOUVERTURE, decouper_groupe, lire_teleinfo, lire_trames,
+                                 separer_horodatage, verifier_checksum)
 
 # Groupes réels reçus d'un compteur Linky en mode historique (voir README)
 GROUPES_HISTORIQUE = [
@@ -129,6 +130,60 @@ def test_dernier_groupe_de_la_trame_lu():
         for trame in lire_trames(serie, ('ISOUSC', 'BASE'), 1):
             trames.append(trame)
     assert trames[0].valeurs == {'ISOUSC': 45, 'BASE': 28563823}
+
+
+def _lire(groupes, etiquettes, methode=1):
+    """Renvoie les valeurs de la première trame formée des groupes donnés."""
+    serie = FausseLiaisonSerie(_lignes(_trame_brute(groupes) + b'\n'))
+    trames = []
+    with pytest.raises(EOFError):
+        for trame in lire_trames(serie, etiquettes, methode):
+            trames.append(trame)
+    return trames[0].valeurs
+
+
+def _groupe_standard(etiquette, *champs):
+    """Groupe du mode standard : champs séparés par HT, somme de contrôle méthode 2."""
+    data = '\t'.join((etiquette,) + champs) + '\t'
+    return data + _checksum(data)
+
+
+def test_etiquettes_textuelles():
+    # Trame Tempo (issue #3). La somme de contrôle de « PTEC HP.. » est un espace.
+    groupes = ['OPTARIF BBR( S', 'PTEC HP..  ', 'DEMAIN ---- "', 'HHPHC A ,', 'IINST 009  ']
+    valeurs = _lire(groupes, ('OPTARIF', 'PTEC', 'DEMAIN', 'HHPHC', 'IINST'))
+    assert valeurs == {'OPTARIF': 'BBR(', 'PTEC': 'HP..', 'DEMAIN': '----', 'HHPHC': 'A', 'IINST': 9}
+
+
+def test_etiquette_textuelle_mode_standard_sans_bourrage():
+    valeurs = _lire([_groupe_standard('LTARF', '  HEURE  PLEINE  '), _groupe_standard('EAST', '012345678')],
+                    ('LTARF', 'EAST'), 2)
+    assert valeurs == {'LTARF': 'HEURE  PLEINE', 'EAST': 12345678}
+
+
+def test_groupes_horodates_mode_standard():
+    groupes = [
+        _groupe_standard('DATE', 'H261124221000', ''),
+        _groupe_standard('SMAXSN', 'H261124083512', '05420'),
+        _groupe_standard('SMAXSN-1', 'H261123191204', '06130'),
+        _groupe_standard('SINSTS', '01250'),
+    ]
+    valeurs = _lire(groupes, ('DATE', 'SMAXSN', 'SMAXSN-1', 'SINSTS'), 2)
+    # DATE ne contient que son horodatage : aucune valeur
+    assert valeurs == {'SMAXSN': 5420, 'SMAXSN-1': 6130, 'SINSTS': 1250}
+
+
+def test_groupe_horodate_checksum_inclut_horodatage():
+    data = 'SMAXSN\tH261124083512\t05420\t'
+    faux = _checksum('SMAXSN\t05420\t')  # somme de contrôle calculée sans l'horodatage
+    assert faux != _checksum(data)
+    assert _lire([data + faux], ('SMAXSN',), 2) == {}
+
+
+def test_separer_horodatage_mode_historique_inchange():
+    assert separer_horodatage('028563823', ' ') == '028563823'
+    assert separer_horodatage('H261124083512\t05420', '\t') == '05420'
+    assert separer_horodatage('H261124221000\t', '\t') == ''
 
 
 class FauxPort:

@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import signal
 
 from . import __version__
@@ -15,6 +16,19 @@ def _handler(signum, frame):
     raise SystemExit(0)
 
 
+def _sortie_vers_journald():
+    """Indique si la sortie d'erreur est reliée à journald.
+
+    systemd définit JOURNAL_STREAM (périphérique:inode) ; la variable est aussi héritée par les
+    programmes lancés depuis une session de bureau, d'où la comparaison avec la sortie d'erreur.
+    """
+    try:
+        stat = os.fstat(2)
+        return os.environ.get('JOURNAL_STREAM') == f'{stat.st_dev}:{stat.st_ino}'
+    except OSError:
+        return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='teleinfo-linky',
@@ -25,8 +39,11 @@ def main(argv=None):
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     args = parser.parse_args(argv)
 
-    # Création du logger
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    # Création du logger. Sous systemd, journald horodate déjà chaque ligne.
+    format_log = '%(levelname)s: %(message)s'
+    if not _sortie_vers_journald():
+        format_log = '%(asctime)s ' + format_log
+    logging.basicConfig(level=logging.INFO, format=format_log)
     logging.info(f'Démarrage Linky Téléinfo {__version__}')
 
     # Capture élégamment une interruption par CTRL+C

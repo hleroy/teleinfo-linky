@@ -1,7 +1,12 @@
 """Envoi des trames vers Prometheus par remote write (POST /api/v1/write).
 
 Modèle de données : chaque étiquette TIC devient une métrique linky_<étiquette en minuscules>
-(linky_base, linky_iinst...) avec les labels job="linky" et location.
+(linky_base, linky_iinst...) avec les labels job="linky" et location. Les caractères interdits
+dans un nom de métrique (+ et - du mode standard) sont remplacés par _ : SMAXSN-1 devient
+linky_smaxsn_1.
+
+Prometheus ne stocke que des nombres : une étiquette textuelle (PTEC, DEMAIN...) devient une
+métrique d'information linky_<étiquette>_info de valeur 1, avec le texte dans le label value.
 """
 
 import base64
@@ -26,7 +31,13 @@ TIMEOUT = 10
 # requête. La marge de 10 minutes couvre le décalage d'horloge et la durée de l'envoi.
 AGE_MAX = 3000
 
-NOM_VALIDE = re.compile(r'^[a-zA-Z_:][a-zA-Z0-9_:]*$')
+CARACTERES_INTERDITS = re.compile(r'[^a-zA-Z0-9_:]')
+
+
+def nom_metrique(etiquette, texte=False):
+    """Nom de la métrique Prometheus d'une étiquette TIC, toujours valide grâce au préfixe."""
+    nom = PREFIXE + CARACTERES_INTERDITS.sub('_', etiquette.lower())
+    return nom + '_info' if texte else nom
 
 
 class _SansRedirection(urllib.request.HTTPRedirectHandler):
@@ -54,7 +65,6 @@ class SortiePrometheus:
         self.location = '' if location is None else str(location)
         self._ouvrir = ouvrir
         self._horloge = horloge
-        self._noms_invalides = set()
         self._entetes = {
             'Content-Encoding': 'snappy',
             'Content-Type': 'application/x-protobuf',
@@ -67,23 +77,27 @@ class SortiePrometheus:
         logging.info(f'Envoi vers Prometheus : {self.url}, toutes les {self.intervalle} secondes')
 
     def series(self, trames):
-        """Regroupe les valeurs des trames en séries remote write, une par étiquette."""
-        par_etiquette = OrderedDict()
+        """Regroupe les valeurs des trames en séries remote write.
+
+        Une série par étiquette numérique, et une par texte reçu pour une étiquette textuelle.
+        """
+        par_serie = OrderedDict()
         for trame in trames:
             horodatage_ms = int(round(trame.horodatage.timestamp() * 1000))
             for etiquette, valeur in trame.valeurs.items():
-                par_etiquette.setdefault(etiquette, []).append((float(valeur), horodatage_ms))
+                if isinstance(valeur, str):
+                    cle, echantillon = (etiquette, valeur), (1.0, horodatage_ms)
+                else:
+                    cle, echantillon = (etiquette, None), (float(valeur), horodatage_ms)
+                par_serie.setdefault(cle, []).append(echantillon)
 
         series = []
-        for etiquette, samples in par_etiquette.items():
-            metrique = PREFIXE + etiquette.lower()
-            if not NOM_VALIDE.match(metrique):
-                if metrique not in self._noms_invalides:
-                    logging.warning(f'Etiquette {etiquette} ignorée : {metrique} n\'est pas un nom de métrique valide')
-                    self._noms_invalides.add(metrique)
-                continue
-            labels = sorted([('__name__', metrique), ('job', JOB), ('location', self.location)])
-            series.append((labels, samples))
+        for (etiquette, texte), samples in par_serie.items():
+            labels = [('__name__', nom_metrique(etiquette, texte is not None)),
+                      ('job', JOB), ('location', self.location)]
+            if texte is not None:
+                labels.append(('value', texte))
+            series.append((sorted(labels), samples))
         return series
 
     def ecrire(self, trames):
@@ -105,7 +119,7 @@ class SortiePrometheus:
         corps = compresser_snappy(encoder_write_request(self.series(recentes)))
         requete = urllib.request.Request(self.url, data=corps, headers=self._entetes, method='POST')
 
-        logging.info(f'Ecriture dans Prometheus ({len(recentes)} trame(s))')
+        logging.debug(f'Ecriture dans Prometheus ({len(recentes)} trame(s))')
         try:
             with self._ouvrir(requete, timeout=TIMEOUT) as reponse:
                 reponse.read()

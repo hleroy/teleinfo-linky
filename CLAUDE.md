@@ -22,6 +22,7 @@ Layout:
   - `PYTHONNOUSERSITE=1`, set in the script and in `linky.service`, keeps the 1.0.0 pip packages in `~/.local` out of the venv.
   - It upgrades pip only when it is older than 22. Debian bullseye's pip 20.3, in a `--system-site-packages` venv, builds the package with Debian's setuptools 52 instead of the isolated setuptools ≥ 77, and fails with `AttributeError: install_layout`.
 - `dashboard_grafana.json` (InfluxDB, Flux) and `dashboard_grafana_prometheus.json` (PromQL).
+- `dashboard_grafana_hphc.json` and `dashboard_grafana_standard_hphc.json`: InfluxDB dashboards for the HP/HC option in historique and standard mode, taken from the Heat-Miser fork.
 - `config.example.yml`: the template for the git-ignored `config.yml`.
 - `CHANGELOG.md`: follows [Keep a Changelog, French](https://keepachangelog.com/fr/1.1.0/), and is written entirely in French.
 - `Références/`: the Enedis TIC specifications. `Enedis-NOI-CPT_02E.pdf` covers historique mode and `Enedis-NOI-CPT_54E.pdf` covers standard mode.
@@ -37,7 +38,8 @@ shellcheck install.sh
 - CI (`.github/workflows/ci.yml`) runs pytest on Python 3.9, 3.11 and 3.13, plus shellcheck.
 - `python -m teleinfo_linky` (or `teleinfo-linky`) reads `config.yml` from the **current directory** unless `--config` is given.
 - With `send_data: false` in both `influxdb` and `prometheus`, frames are parsed but not sent.
-- With `debug: true`, every raw information group is logged.
+- With `debug: true`, every raw information group is logged. Messages emitted on every frame (frame received, writes) are at debug level too, so the journal stays quiet at info level.
+- Log lines carry a timestamp unless stderr goes to journald, which already timestamps them. The check compares `JOURNAL_STREAM` with stderr's device:inode, because desktop sessions export `JOURNAL_STREAM` to every program they start.
 - `lire_trames()` takes any object with `readline()`, so the parser is tested without serial hardware (see `tests/test_tic.py`).
 - For an end-to-end run, use a `socat` pty pair with a script that writes frames.
   - A Linux pty rejects pyserial's 7E1 settings with `termios.error` (EINVAL), so wrap `termios.tcsetattr` to ignore that error during tests.
@@ -51,7 +53,8 @@ shellcheck install.sh
   - opens the serial port in 7E1, at 1200 baud if `linky.legacy_mode` is true (historique) and 9600 otherwise (standard);
   - waits for STX (`0x02`), then reads one information group per line;
   - strips only CR, LF, ETX and STX from each line. Never use a bare `rstrip()`: the checksum can be a space;
-  - detects the separator (SP or HT) from the second-to-last character, and keeps `int(val)` for labels that are in `linky.keys` and whose checksum passes;
+  - detects the separator (SP or HT) from the second-to-last character, and keeps the value of labels that are in `linky.keys` and whose checksum passes: a string with padding spaces stripped for labels in `ETIQUETTES_TEXTE`, `int()` otherwise;
+  - in standard mode, a timestamped group (label HT date HT value HT checksum) is checksummed whole, then `separer_horodatage` drops the date. `DATE` has no value and is skipped;
   - on ETX, builds an immutable `Trame` (UTC datetime and values) and puts it on **each output's own queue**;
   - on a `SerialException` while reading, closes the port and reopens it after 10 s, so queued frames survive. An error while opening the port (permissions, `termios.error`) exits the program; `linky.service` restarts it after `RestartSec=10`.
 - **Output threads** (`envoi.boucle_envoi`): one per enabled output.
@@ -68,7 +71,8 @@ shellcheck install.sh
   - `tests/test_influxdb.py` pins this behaviour against a fake InfluxDB server: the exact line protocol, the write URL and token, and every error being temporary. If one of these tests fails, the change breaks existing users, so fix the code, not the test.
 - **Prometheus** (`SortiePrometheus`):
   - every `push_interval` seconds, drains the queue (up to 2000 frames) into one remote-write request. Every frame keeps its own millisecond timestamp;
-  - metric name `linky_<label lowercase>`, labels `job="linky"` and `location`;
+  - metric name `linky_<label lowercase>`, with characters other than `[a-zA-Z0-9_:]` replaced by `_` (`SMAXSN-1` gives `linky_smaxsn_1`), labels `job="linky"` and `location`;
+  - a text label becomes an info metric `linky_<label>_info{value="<text>"}` with value 1;
   - `remote_write.py` encodes the protobuf by hand and uses a literal-only snappy stream, so there is no runtime dependency (Pi Zero, armv6). Labels must be sorted by name;
   - `location` is converted to a string (`None` becomes an empty label), because YAML reads a postcode as an integer;
   - redirects are not followed (urllib would turn the POST into a GET). Network errors, 3xx, 5xx, 429, 401 and 403 are temporary;
@@ -81,8 +85,10 @@ shellcheck install.sh
   - see Enedis-NOI-CPT_02E, page 19.
 
 **Parser limits:**
-- Every selected value goes through `int()`. A non-numeric label such as `PTEC`, `OPTARIF` or `ADCO` therefore raises an exception in the generic handler instead of being stored.
-- In standard mode, some groups carry a timestamp field (label, date, value, checksum). The parser cuts only at the first separator, so these groups do not parse correctly.
+- `ETIQUETTES_TEXTE` (`tic.py`) is a fixed list. Any other label goes through `int()`, so an unlisted non-numeric label raises an exception in the generic handler instead of being stored. `STGE` is hexadecimal and fails whenever it contains a letter.
+- Don't replace the list with "`int()`, falling back to a string": a label whose type changes between frames causes an InfluxDB field type conflict, and since every InfluxDB error is temporary, that frame would be retried forever.
+- For the same reason, never move a label that `int()` already accepts (`ADCO`, `MOTDETAT`…) into `ETIQUETTES_TEXTE`: existing users store it as an integer field.
+- The date of timestamped groups is dropped; the value is stored with the frame's reception time.
 
 ## Releases
 

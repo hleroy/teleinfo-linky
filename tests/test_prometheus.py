@@ -134,10 +134,24 @@ def test_trames_trop_anciennes_ignorees(serveur, caplog):
     assert len(serveur.requetes) == 1
 
 
-def test_etiquette_invalide_ignoree(serveur):
+def test_caracteres_interdits_remplaces(serveur):
     sortie = _sortie(serveur.url)
-    series = sortie.series([Trame(MAINTENANT, {'BASE': 1, 'PJOURF+1': 2})])
-    assert [dict(labels)['__name__'] for labels, _ in series] == ['linky_base']
+    series = sortie.series([Trame(MAINTENANT, {'BASE': 1, 'SMAXSN-1': 2, 'NJOURF+1': 3})])
+    assert [dict(labels)['__name__'] for labels, _ in series] == ['linky_base', 'linky_smaxsn_1', 'linky_njourf_1']
+
+
+def test_etiquette_textuelle_metrique_info(serveur):
+    ms = int(MAINTENANT.timestamp() * 1000)
+    trames = [Trame(MAINTENANT, {'PTEC': 'HP..', 'IINST': 9}),
+              Trame(MAINTENANT + timedelta(seconds=1), {'PTEC': 'HC..', 'IINST': 8})]
+    series = _sortie(serveur.url).series(trames)
+    assert series == [
+        ([('__name__', 'linky_ptec_info'), ('job', 'linky'), ('location', 'Paris'), ('value', 'HP..')],
+         [(1.0, ms)]),
+        ([('__name__', 'linky_iinst'), ('job', 'linky'), ('location', 'Paris')], [(9.0, ms), (8.0, ms + 1000)]),
+        ([('__name__', 'linky_ptec_info'), ('job', 'linky'), ('location', 'Paris'), ('value', 'HC..')],
+         [(1.0, ms + 1000)]),
+    ]
 
 
 def test_age_max_limite(serveur):

@@ -96,6 +96,15 @@ def test_modele_de_donnees(serveur):
     ]
 
 
+def test_etiquette_textuelle_champ_texte(serveur):
+    _sortie(serveur.url).ecrire([Trame(INSTANT, {'PTEC': 'HP..', 'IINST': 9})])
+
+    assert serveur.requetes[0][2].split('\n') == [
+        f'PTEC,location=Paris value="HP.." {NS}',
+        f'IINST,location=Paris value=9i {NS}',
+    ]
+
+
 def test_une_ecriture_par_trame():
     assert SortieInfluxDB.taille_max_lot == 1
     assert SortieInfluxDB.intervalle == 0

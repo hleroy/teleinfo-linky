@@ -5,7 +5,7 @@ import termios
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Union
 
 START_FRAME = b'\x02'  # STX, Start of Text
 STOP_FRAME = b'\x03'   # ETX, End of Text
@@ -13,12 +13,30 @@ STOP_FRAME = b'\x03'   # ETX, End of Text
 # Attente avant de rouvrir le port série après une erreur de lecture, en secondes
 DELAI_REOUVERTURE = 10
 
+# Etiquettes dont la donnée est un texte, conservée telle quelle (sans les espaces de bourrage).
+# Les autres sont converties en entier. Réf Enedis-NOI-CPT_02E (historique) et
+# Enedis-NOI-CPT_54E (standard).
+ETIQUETTES_TEXTE = frozenset([
+    # Mode historique
+    'OPTARIF',   # option tarifaire (BASE, HC.., EJP., BBRx)
+    'PTEC',      # période tarifaire en cours (TH.., HP.., HCJB...)
+    'DEMAIN',    # couleur du lendemain en option Tempo (----, BLEU, BLAN, ROUG)
+    'HHPHC',     # horaire heures pleines / heures creuses (A, C, D, E, Y)
+    # Mode standard
+    'NGTF',      # nom du calendrier tarifaire fournisseur
+    'LTARF',     # libellé tarif fournisseur en cours
+    'MSG1',      # message court
+    'MSG2',      # message ultra court
+    'PJOURF+1',  # profil du prochain jour calendrier fournisseur
+    'PPOINTE',   # profil du prochain jour de pointe
+])
+
 
 @dataclass(frozen=True)
 class Trame:
     """Trame reçue : horodatage UTC de réception et valeurs des étiquettes retenues."""
     horodatage: datetime
-    valeurs: Dict[str, int]
+    valeurs: Dict[str, Union[int, str]]
 
 
 # -------------------------------------------------------------------------------------------------------------
@@ -45,7 +63,11 @@ def verifier_checksum(etiquette, valeur, separateur, checksum, methode):
 
 
 def decouper_groupe(groupe):
-    """Découpe un groupe d'information (sans LF ni CR) en (étiquette, donnée, séparateur, contrôle)."""
+    """Découpe un groupe d'information (sans LF ni CR) en (étiquette, donnée, séparateur, contrôle).
+
+    En mode standard, la donnée d'un groupe horodaté contient l'horodatage, un séparateur puis
+    la valeur : la somme de contrôle porte sur l'ensemble (voir separer_horodatage).
+    """
     # La somme de contrôle est le dernier caractère de la ligne
     checksum = groupe[-1]
     # Le séparateur en vigueur (espace ou tabulation) est l'avant-dernier caractère
@@ -53,6 +75,24 @@ def decouper_groupe(groupe):
     # Position du séparateur entre le champ étiquette et le champ donnée
     pos = groupe.find(separateur)
     return groupe[0:pos], groupe[pos+1:-2], separateur, checksum
+
+
+def separer_horodatage(donnee, separateur):
+    """Renvoie la valeur d'une donnée, sans l'horodatage des groupes horodatés du mode standard.
+
+    Groupe horodaté : étiquette HT horodatage HT valeur HT contrôle. La valeur est vide pour
+    l'étiquette DATE. En mode historique (séparateur espace), la donnée est renvoyée telle quelle.
+    """
+    if separateur == '\t' and '\t' in donnee:
+        return donnee.split('\t', 1)[1]
+    return donnee
+
+
+def convertir(etiquette, valeur):
+    """Convertit la valeur en entier, sauf pour les étiquettes textuelles (ETIQUETTES_TEXTE)."""
+    if etiquette in ETIQUETTES_TEXTE:
+        return valeur.strip(' ')
+    return int(valeur)
 
 
 def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(timezone.utc)):
@@ -68,6 +108,7 @@ def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(
         line = ser.readline()
 
     valeurs = dict()
+    premiere = True
     while True:
         line = ser.readline()
         line_str = ''
@@ -86,9 +127,12 @@ def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(
             # Est-ce une étiquette qui nous intéresse ?
             if key in etiquettes:
                 if verifier_checksum(key, val, separator, checksum, methode_checksum):
-                    valeurs[key] = int(val)
+                    val = separer_horodatage(val, separator)
+                    # Un groupe sans valeur (DATE) ne contient que son horodatage
+                    if val:
+                        valeurs[key] = convertir(key, val)
                 else:
-                    logging.debug(f'Somme de contrôle erronée pour {key}')
+                    logging.warning(f'Somme de contrôle erronée pour {key}')
 
         except Exception as e:
             logging.error(f'Une exception s\'est produite : {e}', exc_info=True)
@@ -96,7 +140,10 @@ def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(
 
         # Si caractère de fin de trame dans la ligne, la trame est complète
         if STOP_FRAME in line:
-            logging.info(f'Trame reçue ({len(valeurs)} étiquettes traités)')
+            if premiere:
+                logging.info(f'Première trame reçue ({len(valeurs)} étiquette(s) retenue(s))')
+                premiere = False
+            logging.debug(f'Trame reçue : {valeurs}')
             yield Trame(horodatage=horloge(), valeurs=valeurs)
             valeurs = dict()
 

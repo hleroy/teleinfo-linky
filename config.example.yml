@@ -26,7 +26,8 @@ prometheus:
   password:
   push_interval: 10            # Secondes entre deux envois
 
-# Liste des étiquettes transmises par la Téléinfo Client (TIC)
+# Liste des étiquettes transmises par la Téléinfo Client (TIC) en mode historique. OPTARIF, PTEC,
+# DEMAIN et HHPHC sont des textes, les autres des nombres.
 
 # ADCO     : Adresse du compteur
 # OPTARIF  : Option tarifaire choisie

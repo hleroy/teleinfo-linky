@@ -7,6 +7,36 @@ et ce projet adhère à la [gestion sémantique de version](https://semver.org/l
 
 ## [Non publié]
 
+## [1.2.0] - 2026-11-24
+
+Cette version s'inspire des forks de [François Charlier](https://github.com/fcharlier) et de
+[Heat Miser](https://github.com/Heat-Miser) : merci à eux.
+
+### Ajouté
+
+- Prise en charge des étiquettes textuelles : `OPTARIF`, `PTEC`, `DEMAIN` et `HHPHC` en mode
+  historique, `NGTF`, `LTARF`, `MSG1`, `MSG2`, `PJOURF+1` et `PPOINTE` en mode standard. La
+  couleur du lendemain en option Tempo peut ainsi être enregistrée. Elles sont envoyées sous
+  forme de texte vers InfluxDB, et deviennent des métriques d'information
+  `linky_<étiquette>_info` dans Prometheus.
+- Prise en charge des groupes horodatés du mode standard (`SMAXSN`, `CCASN`, `UMOY1`…) : la
+  somme de contrôle porte sur le groupe entier et seule la valeur est conservée.
+- Tableaux de bord Grafana pour l'option heures pleines / heures creuses avec InfluxDB, en mode
+  historique (`dashboard_grafana_hphc.json`) et en mode standard
+  (`dashboard_grafana_standard_hphc.json`, avec l'énergie injectée).
+- Message à la réception de la première trame, qui confirme que la liaison série fonctionne.
+- Les messages sont horodatés lorsque le programme n'est pas lancé par systemd (journald les
+  horodate déjà).
+
+### Modifié
+
+- Les messages émis à chaque trame (réception, écriture dans InfluxDB ou Prometheus) passent au
+  niveau debug, pour ne plus remplir le journal.
+- Une somme de contrôle erronée est signalée par un avertissement, et plus seulement en mode
+  debug.
+- Prometheus : les caractères `+` et `-` des étiquettes du mode standard sont remplacés par `_`
+  (`SMAXSN-1` devient `linky_smaxsn_1`), au lieu d'ignorer l'étiquette.
+
 ## [1.1.0] - 2026-11-24
 
 ### Ajouté
@@ -55,6 +85,7 @@ et ce projet adhère à la [gestion sémantique de version](https://semver.org/l
 - Version initiale : lecture de la téléinformation client (TIC) du compteur Linky, envoi vers
   InfluxDB 2.x, service systemd et tableau de bord Grafana.
 
-[Non publié]: https://github.com/hleroy/teleinfo-linky/compare/v1.1.0...HEAD
+[Non publié]: https://github.com/hleroy/teleinfo-linky/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/hleroy/teleinfo-linky/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/hleroy/teleinfo-linky/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/hleroy/teleinfo-linky/releases/tag/v1.0.0

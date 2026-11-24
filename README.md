@@ -166,7 +166,7 @@ Configuration
 -------------
 
 Le fichier `~/linky/config.yml` contient :
-* la section `linky` : nom du lieu (`location`), mode de la TIC (historique ou standard), méthode de calcul de la somme de contrôle et liste des étiquettes à récupérer. Seules les étiquettes numériques sont prises en charge ;
+* la section `linky` : nom du lieu (`location`), mode de la TIC (historique ou standard), méthode de calcul de la somme de contrôle et liste des étiquettes à récupérer. Les étiquettes textuelles (`PTEC`, `DEMAIN`, `LTARF`…) sont envoyées sous forme de texte ;
 * la section `raspberry` : port série ;
 * les sections `influxdb` et `prometheus` : destinations des données. Activez-en une ou les deux avec `send_data: true`. Si aucune n'est activée, le programme lit les trames sans les envoyer, ce qui permet de le tester.
 
@@ -180,7 +180,7 @@ Envoi vers InfluxDB
 
 Configurez l'adresse du serveur, le bucket, le jeton (token) et l'organisation dans la section `influxdb`.
 
-Chaque étiquette est une *measurement* (`BASE`, `IINST`...) avec un champ `value` et un tag `location`. Si InfluxDB est injoignable, les trames sont conservées en mémoire et renvoyées dès que possible.
+Chaque étiquette est une *measurement* (`BASE`, `IINST`...) avec un champ `value` et un tag `location`. Le champ `value` est un entier, ou un texte pour les étiquettes textuelles (`PTEC`, `DEMAIN`…). Si InfluxDB est injoignable, les trames sont conservées en mémoire et renvoyées dès que possible.
 
 
 Envoi vers Prometheus
@@ -188,13 +188,15 @@ Envoi vers Prometheus
 
 Le programme envoie les données par *remote write* (`POST /api/v1/write`). Prometheus doit être lancé avec l'option `--web.enable-remote-write-receiver`. Configurez l'adresse complète du point d'entrée dans la section `prometheus`, et éventuellement un identifiant et un mot de passe (authentification Basic, par exemple derrière un reverse proxy). Les trames sont regroupées et envoyées toutes les `push_interval` secondes (10 par défaut), chacune avec son propre horodatage.
 
-Chaque étiquette devient une métrique `linky_<étiquette en minuscules>` avec les labels `job="linky"` et `location` :
+Chaque étiquette devient une métrique `linky_<étiquette en minuscules>` avec les labels `job="linky"` et `location`. Les caractères `+` et `-` des étiquettes du mode standard sont remplacés par `_`. Prometheus ne stocke que des nombres : une étiquette textuelle devient une métrique d'information `linky_<étiquette>_info`, de valeur 1, dont le label `value` contient le texte.
 
-| Etiquette | Métrique       |
-| :-------- | :------------- |
-| `BASE`    | `linky_base`   |
-| `IINST`   | `linky_iinst`  |
-| `ISOUSC`  | `linky_isousc` |
+| Etiquette      | Métrique                                     |
+| :------------- | :------------------------------------------- |
+| `BASE`         | `linky_base`                                 |
+| `IINST`        | `linky_iinst`                                |
+| `ISOUSC`       | `linky_isousc`                               |
+| `SMAXSN-1`     | `linky_smaxsn_1`                             |
+| `PTEC` (texte) | `linky_ptec_info{value="HP.."}`, de valeur 1 |
 
 Différences avec InfluxDB :
 * Prometheus refuse les échantillons de plus d'une heure. Si le serveur reste injoignable plus de 50 minutes, les trames plus anciennes sont abandonnées.
@@ -207,6 +209,12 @@ Tableau de bord
 ---------------
 
 Importez dans Grafana le tableau de bord correspondant à votre base de données : [`dashboard_grafana.json`](dashboard_grafana.json) pour InfluxDB ou [`dashboard_grafana_prometheus.json`](dashboard_grafana_prometheus.json) pour Prometheus.
+
+Pour l'option heures pleines / heures creuses avec InfluxDB, deux autres tableaux de bord sont proposés, contribués par [Heat Miser](https://github.com/Heat-Miser) :
+* [`dashboard_grafana_hphc.json`](dashboard_grafana_hphc.json) en mode historique, avec les étiquettes `HCHC`, `HCHP`, `PTEC`, `PAPP`, `IINST` et `ISOUSC` ;
+* [`dashboard_grafana_standard_hphc.json`](dashboard_grafana_standard_hphc.json) en mode standard, avec les étiquettes `EAST`, `EASF01` (heures creuses), `EASF02` (heures pleines), `LTARF`, `SINSTS`, `IRMS1`, `URMS1` et `PCOUP`. Avec `EAIT` et `SINSTI`, il affiche aussi l'énergie injectée (production solaire, par exemple). L'affectation des index `EASF01` et `EASF02` dépend du calendrier de votre fournisseur : vérifiez-la sur votre compteur.
+
+Le panneau « Coût énergie sur la période » utilise des prix du kWh inscrits dans sa requête : adaptez-les à votre contrat.
 
 Avec InfluxDB, la configuration d'un tableau de bord directement dans l'interface d'InfluxDB est également assez intuitive :
 

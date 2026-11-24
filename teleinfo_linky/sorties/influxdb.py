@@ -55,7 +55,7 @@ class SortieInfluxDB:
             for measure, value in trame.valeurs.items():
                 record.append(Point(measure).field('value', value).time(ftime))
 
-        logging.info('Ecriture dans InfluxDB')
+        logging.debug('Ecriture dans InfluxDB')
         try:
             self._write_api.write(bucket=self.bucket, record=record)
         except ApiException as exc:
