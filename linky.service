@@ -8,9 +8,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 /home/pi/linky/linky.py
-WorkingDirectory=/home/pi/linky/
+Environment=PYTHONNOUSERSITE=1
+ExecStart=%h/linky/.venv/bin/teleinfo-linky
+WorkingDirectory=%h/linky/
 Restart=on-failure
+# Sans délai, systemd abandonne après cinq échecs en dix secondes
+RestartSec=10
 TimeoutStopSec=1
 
 [Install]

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teleinfo-linky"
+dynamic = ["version"]
+description = "Lecture de la télé-information client (TIC) du compteur Linky et envoi vers InfluxDB ou Prometheus"
+readme = "README.md"
+requires-python = ">=3.9"
+license-files = ["COPYING"]
+authors = [{ name = "Hervé Le Roy" }]
+dependencies = [
+    "PyYAML",
+    "pySerial",
+]
+
+[project.optional-dependencies]
+influxdb = ["influxdb-client"]
+test = ["pytest", "cramjam"]
+
+[project.scripts]
+teleinfo-linky = "teleinfo_linky.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/hleroy/teleinfo-linky"
+Changelog = "https://github.com/hleroy/teleinfo-linky/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["teleinfo_linky", "teleinfo_linky.sorties"]
+
+[tool.setuptools.dynamic]
+version = { attr = "teleinfo_linky.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -442,7 +442,7 @@
             "uid": "${DS_LINKY}"
           },
           "hide": false,
-          "query": "from(bucket: \"teleinfo\")\n  |> range(start: -30d)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1d, fn: spread, createEmpty: true)\n  |> map(fn: (r) => ({ _value:r._value, _time:r._time, _field:\"Puissance consommée\" }))",
+          "query": "// Consommation journalière = dernier index BASE - premier index BASE de chaque jour.\n// Deux requêtes first/last séparées : InfluxDB les calcule dans son moteur de stockage\n// (spread() lit tous les points).\nbegin = from(bucket: \"teleinfo\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1d, fn: first, createEmpty: false, timeSrc: \"_start\")\n\nend = from(bucket: \"teleinfo\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1d, fn: last, createEmpty: false, timeSrc: \"_start\")\n\njoin(tables: {end: end, begin: begin}, on: [\"_time\"])\n  |> map(fn: (r) => ({ _time: r._time, _value: r._value_end - r._value_begin, _field: \"Puissance consommée\" }))\n  |> group(columns: [\"_field\"])",
           "refId": "BASE"
         }
       ],
@@ -533,11 +533,11 @@
             "uid": "${DS_LINKY}"
           },
           "hide": false,
-          "query": "from(bucket: \"teleinfo\")\n  |> range(start: -1y)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1mo, fn: spread, createEmpty: true)\n  |> map(fn: (r) => ({ _value:r._value, _time:r._time, _field:\"Puissance consommée\" }))",
+          "query": "// Consommation mensuelle = dernier index BASE - premier index BASE de chaque mois.\n// Deux requêtes first/last séparées : InfluxDB les calcule dans son moteur de stockage,\n// alors que spread() sur un an de points dépassait le délai de 30 s de Grafana.\n// Une option location Europe/Paris ou une variable de source partagée empêche ce calcul\n// dans le moteur de stockage : les fenêtres sont donc en UTC.\nbegin = from(bucket: \"teleinfo\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1mo, fn: first, createEmpty: false, timeSrc: \"_start\")\n\nend = from(bucket: \"teleinfo\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"BASE\" and r._field == \"value\")\n  |> aggregateWindow(every: 1mo, fn: last, createEmpty: false, timeSrc: \"_start\")\n\njoin(tables: {end: end, begin: begin}, on: [\"_time\"])\n  |> map(fn: (r) => ({ _time: r._time, _value: r._value_end - r._value_begin, _field: \"Puissance consommée\" }))\n  |> group(columns: [\"_field\"])",
           "refId": "BASE"
         }
       ],
-      "timeFrom": "now-1y/y",
+      "timeFrom": "now-12M/M",
       "title": "12 derniers mois",
       "type": "timeseries"
     },

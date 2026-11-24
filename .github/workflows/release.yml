@@ -1,0 +1,50 @@
+name: Publication
+
+# Publie une version à chaque étiquette vX.Y.Z : archive .tar.gz, somme de contrôle SHA-256,
+# attestation de provenance et install.sh, avec la section du CHANGELOG comme notes de version.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write       # création de la version GitHub
+  id-token: write       # attestation de provenance
+  attestations: write
+
+jobs:
+  publication:
+    # ubuntu-24.04 : Python 3.9 n'est plus disponible sur ubuntu-latest (26.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Vérification de la version et du CHANGELOG
+        run: python3 scripts/notes_version.py "$GITHUB_REF_NAME" > notes.md
+
+      - name: Tests
+        run: |
+          pip install ".[test,influxdb]"
+          python -m pytest -q
+          shellcheck install.sh
+
+      - name: Archive
+        run: |
+          git archive --format=tar.gz --prefix="teleinfo-linky-${GITHUB_REF_NAME#v}/" \
+            -o teleinfo-linky.tar.gz "$GITHUB_REF_NAME"
+          sha256sum teleinfo-linky.tar.gz > teleinfo-linky.tar.gz.sha256
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: teleinfo-linky.tar.gz
+
+      - name: Version GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "Téléinfo Linky ${GITHUB_REF_NAME#v}" --notes-file notes.md \
+            teleinfo-linky.tar.gz teleinfo-linky.tar.gz.sha256 install.sh

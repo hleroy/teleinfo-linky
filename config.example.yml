@@ -9,12 +9,22 @@ linky:
 raspberry:
   stty_port: '/dev/ttyAMA0'    # Port série du Raspberry Pi
 
+# Destinations des données : InfluxDB et/ou Prometheus. Avec send_data: false partout, le script
+# lit les trames sans les envoyer, ce qui permet de le tester en local.
+
 influxdb:
-  send_data: false             # false permet de tester le script en local sans envoyer de données
+  send_data: false             # true pour envoyer vers InfluxDB 2.x
   url: https://url-serveur-influxdb
   bucket: teleinfo
   token: 
   org: 
+
+prometheus:
+  send_data: false             # true pour envoyer vers Prometheus (remote write)
+  url: https://url-serveur-prometheus/api/v1/write
+  username:                    # Authentification Basic, facultative
+  password:
+  push_interval: 10            # Secondes entre deux envois
 
 # Liste des étiquettes transmises par la Téléinfo Client (TIC)
 

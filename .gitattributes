@@ -1,0 +1,9 @@
+# Fichiers exclus de l'archive publiée (git archive)
+/Références export-ignore
+/screenshot_*.png export-ignore
+/tests export-ignore
+/scripts export-ignore
+/.github export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/CLAUDE.md export-ignore

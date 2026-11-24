@@ -3,12 +3,14 @@ Téléinfo Linky
 
 ![screenshot_grafana.png](screenshot_grafana.png)
 
-__Téléinfo Linky__ récupère les données de téléinformation client (TIC) du compteur Linky sur un Raspberry Pi. Les données sont envoyées vers un bucket InfluxDB pour stockage. La visualisation peut s'effectuer directement sous InfluxDB ou avec un autre outil comme Grafana.
+__Téléinfo Linky__ récupère les données de téléinformation client (TIC) du compteur Linky sur un Raspberry Pi. Les données sont envoyées vers InfluxDB 2.x, vers Prometheus, ou vers les deux. La visualisation peut s'effectuer avec Grafana.
 
 Ce dépôt comprend :
-* le script Python pour lire les données de téléinformation via le port série du Raspberry Pi
-* un service Systemd pour lancer le script automatiquement
-* un tableau de bord Grafana
+* le programme Python pour lire les données de téléinformation via le port série du Raspberry Pi
+* un script d'installation et un service Systemd pour lancer le programme automatiquement
+* un tableau de bord Grafana pour InfluxDB et un autre pour Prometheus
+
+Les modifications de chaque version sont décrites dans le [journal des modifications](CHANGELOG.md).
 
 
 Pré-requis
@@ -16,7 +18,8 @@ Pré-requis
 
 * Raspberry Pi (ou tout autre système Linux disposant d'un port série)
 * Module électronique pour la connexion entre le Linky et le port GPIO du Pi
-* InfluxDB et Grafana (hors cadre de ce tutoriel)
+* Python 3.9 ou plus récent (Raspberry Pi OS 11 ou plus récent)
+* InfluxDB 2.x ou Prometheus (avec l'option `--web.enable-remote-write-receiver`), et Grafana (hors cadre de ce tutoriel)
 
 Testé avec un Raspberry Pi Zero W (Raspbian 11) et le module [PITInfo](https://www.tindie.com/products/Hallard/pitinfo/) (~10€)
 
@@ -59,7 +62,7 @@ PTEC TH.. $
 IINST 003 Z
 IMAX 090 H
 PAPP 00760 .
-HHHCA 
+HHHCA
 MTDTAT000000 B
 ```
 
@@ -68,35 +71,79 @@ Pour quitter `screen`, tapez `ctrl-a + k`.
 Si cela ne fonctionne pas, inutile d'aller plus loin et vérifiez votre installation.
 
 
-Installation
-------------
+Installation automatique
+------------------------
 
-Installation des dépendances (`PyYAML`, `pySerial` et `influxdb-client`)
+Le script [`install.sh`](install.sh) installe la dernière version dans `~/linky`. Il :
+* télécharge l'archive de la version et vérifie sa somme de contrôle SHA-256 ;
+* installe les paquets Debian `python3-venv`, `python3-yaml` et `python3-serial` si nécessaire ;
+* installe le programme et ses autres dépendances dans un environnement virtuel Python (`~/linky/.venv`). Sur un Raspberry Pi Zero, cette étape prend plusieurs minutes ;
+* crée `~/linky/config.yml` à partir de l'exemple, sans jamais modifier un fichier existant ;
+* ajoute l'utilisateur au groupe `dialout` si nécessaire ;
+* installe et active le service Systemd utilisateur `linky`.
+
+Les commandes qui demandent les droits administrateur (`sudo`) sont affichées avant d'être exécutées.
+
+    $ curl -fsSL https://github.com/hleroy/teleinfo-linky/releases/latest/download/install.sh | bash
+
+Pour lire le script avant de l'exécuter :
+
+    $ curl -fsSLO https://github.com/hleroy/teleinfo-linky/releases/latest/download/install.sh
+    $ less install.sh
+    $ bash install.sh
+
+Editez ensuite `~/linky/config.yml` (voir Configuration), puis démarrez le service :
+
+    $ systemctl --user start linky
+
+Le même script met à jour une installation existante : il conserve `config.yml` et redémarre le service.
+
+
+Installation manuelle
+---------------------
+
+Les étapes ci-dessous font la même chose que le script d'installation, une par une.
+
+Installation des paquets système
 
     $ sudo apt update && sudo apt upgrade -y
-    $ sudo apt install python3-pip
-    $ pip install PyYAML pySerial influxdb-client
+    $ sudo apt install python3-venv python3-yaml python3-serial
 
-Création des répertoires
+Téléchargement de la dernière version et vérification de sa somme de contrôle
 
-    $ mkdir -p ~/linky ~/.config/systemd/user
+    $ cd /tmp
+    $ curl -fsSLO https://github.com/hleroy/teleinfo-linky/releases/latest/download/teleinfo-linky.tar.gz
+    $ curl -fsSLO https://github.com/hleroy/teleinfo-linky/releases/latest/download/teleinfo-linky.tar.gz.sha256
+    $ sha256sum -c teleinfo-linky.tar.gz.sha256
 
-Copie des fichiers depuis Github
+Facultatif : vérification que l'archive a bien été produite par le dépôt GitHub (nécessite l'outil [`gh`](https://cli.github.com/))
 
-    $ wget -O ~/.config/systemd/user/linky.service https://raw.githubusercontent.com/hleroy/teleinfo-linky/main/linky.service
-    $ wget -O ~/linky/linky.py https://raw.githubusercontent.com/hleroy/teleinfo-linky/main/linky.py
-    $ wget -O ~/linky/config.yml https://raw.githubusercontent.com/hleroy/teleinfo-linky/main/config.example.yml
+    $ gh attestation verify teleinfo-linky.tar.gz --repo hleroy/teleinfo-linky
 
-Editez le fichier `config.yml` et configurez les paramètres du serveur InfluxDB.
+Extraction dans `~/linky`
 
-Démarrez le service Linky
+    $ mkdir -p ~/linky
+    $ tar -xzf teleinfo-linky.tar.gz -C ~/linky --strip-components=1
 
+Installation dans un environnement virtuel Python. L'option `--system-site-packages` lui donne accès aux paquets Debian installés plus haut, déjà compilés : pip n'a ainsi pas à les télécharger ni à les compiler, ce qui est très lent sur un Raspberry Pi Zero. `PYTHONNOUSERSITE=1` écarte les paquets installés par pip dans `~/.local` (version 1.0.0). Retirez `[influxdb]` si vous n'utilisez que Prometheus.
+
+    $ python3 -m venv --system-site-packages ~/linky/.venv
+    $ PYTHONNOUSERSITE=1 ~/linky/.venv/bin/pip install "$HOME/linky[influxdb]"
+
+Création du fichier de configuration (voir Configuration)
+
+    $ cp ~/linky/config.example.yml ~/linky/config.yml
+
+Installation du service Systemd
+
+    $ mkdir -p ~/.config/systemd/user
+    $ cp ~/linky/linky.service ~/.config/systemd/user/
     $ systemctl --user daemon-reload
     $ systemctl --user start linky
 
 Vérifiez que le service est bien démarré et qu'il n'y a pas d'erreur dans les journaux
 
-    $ systemctl --user status
+    $ systemctl --user status linky
     $ journalctl --user-unit linky
 
 Puis activez le service (la deuxième commande permet le démarrage automatique des instances utilisateur de systemd)
@@ -105,10 +152,63 @@ Puis activez le service (la deuxième commande permet le démarrage automatique 
     $ sudo loginctl enable-linger $USER
 
 
+Mise à jour depuis la version 1.0.0
+-----------------------------------
+
+La version 1.0.0 s'installait en copiant `linky.py` dans `~/linky`, avec des dépendances installées par `pip install` pour tout le système. Pour passer à la nouvelle version, lancez le script d'installation automatique ou suivez l'installation manuelle : `config.yml` reste compatible et le service est remplacé. Les dépendances installées par `pip` ne sont plus utilisées (le nouveau service ignore notamment `~/.local`) et peuvent être désinstallées :
+
+    $ pip uninstall PyYAML pySerial influxdb-client
+
+Le fichier `linky.py` est conservé comme lanceur de compatibilité : l'ancien service, qui exécute `/usr/bin/python3 ~/linky/linky.py`, continue de fonctionner tant qu'il n'est pas remplacé.
+
+
+Configuration
+-------------
+
+Le fichier `~/linky/config.yml` contient :
+* la section `linky` : nom du lieu (`location`), mode de la TIC (historique ou standard), méthode de calcul de la somme de contrôle et liste des étiquettes à récupérer. Seules les étiquettes numériques sont prises en charge ;
+* la section `raspberry` : port série ;
+* les sections `influxdb` et `prometheus` : destinations des données. Activez-en une ou les deux avec `send_data: true`. Si aucune n'est activée, le programme lit les trames sans les envoyer, ce qui permet de le tester.
+
+Le programme lit `config.yml` dans le répertoire courant. L'option `--config` permet d'indiquer un autre fichier :
+
+    $ ~/linky/.venv/bin/teleinfo-linky --config /chemin/vers/config.yml
+
+
+Envoi vers InfluxDB
+-------------------
+
+Configurez l'adresse du serveur, le bucket, le jeton (token) et l'organisation dans la section `influxdb`.
+
+Chaque étiquette est une *measurement* (`BASE`, `IINST`...) avec un champ `value` et un tag `location`. Si InfluxDB est injoignable, les trames sont conservées en mémoire et renvoyées dès que possible.
+
+
+Envoi vers Prometheus
+---------------------
+
+Le programme envoie les données par *remote write* (`POST /api/v1/write`). Prometheus doit être lancé avec l'option `--web.enable-remote-write-receiver`. Configurez l'adresse complète du point d'entrée dans la section `prometheus`, et éventuellement un identifiant et un mot de passe (authentification Basic, par exemple derrière un reverse proxy). Les trames sont regroupées et envoyées toutes les `push_interval` secondes (10 par défaut), chacune avec son propre horodatage.
+
+Chaque étiquette devient une métrique `linky_<étiquette en minuscules>` avec les labels `job="linky"` et `location` :
+
+| Etiquette | Métrique       |
+| :-------- | :------------- |
+| `BASE`    | `linky_base`   |
+| `IINST`   | `linky_iinst`  |
+| `ISOUSC`  | `linky_isousc` |
+
+Différences avec InfluxDB :
+* Prometheus refuse les échantillons de plus d'une heure. Si le serveur reste injoignable plus de 50 minutes, les trames plus anciennes sont abandonnées.
+* La durée de conservation des données de Prometheus est souvent courte (15 jours par défaut). Allongez-la (`--storage.tsdb.retention.time`) pour conserver l'historique de consommation.
+
+Si le serveur n'accepte que l'IPv4 alors que le Raspberry Pi dispose d'une adresse IPv6, associez le nom du serveur à son adresse IPv4 dans `/etc/hosts`.
+
+
 Tableau de bord
 ---------------
 
-Une fois les données dans InfluxDB, la configuration d'un tableau de bord est assez intuitive :
+Importez dans Grafana le tableau de bord correspondant à votre base de données : [`dashboard_grafana.json`](dashboard_grafana.json) pour InfluxDB ou [`dashboard_grafana_prometheus.json`](dashboard_grafana_prometheus.json) pour Prometheus.
+
+Avec InfluxDB, la configuration d'un tableau de bord directement dans l'interface d'InfluxDB est également assez intuitive :
 
 ![screenshot_influx.png](screenshot_influx.png)
 
@@ -148,20 +248,12 @@ Désactiver les services Bluetooth
 Redémarrez.
 
 
-Changelog
-=========
-
-## [1.0.0] - 2023-02-28
-
-- Version initiale
-                     
-
 Copyright et license
 ====================
 
 Téléinfo Linky est publié sous licence [GNU General Public License v3.0](COPYING) (GPL-3.0-or-later).
 
-Copyright © 2023 Hervé Le Roy – hleroy@hleroy.com
+Copyright © 2023 - 2026 Hervé Le Roy – hleroy@hleroy.com
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
