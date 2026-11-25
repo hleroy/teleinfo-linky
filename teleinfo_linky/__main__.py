@@ -8,6 +8,7 @@ import signal
 from . import __version__
 from . import config as configuration
 from .envoi import demarrer
+from .suivi import Suivi
 from .tic import lire_teleinfo
 
 
@@ -44,7 +45,7 @@ def main(argv=None):
     if not _sortie_vers_journald():
         format_log = '%(asctime)s ' + format_log
     logging.basicConfig(level=logging.INFO, format=format_log)
-    logging.info(f'Démarrage Linky Téléinfo {__version__}')
+    logging.info(f'Démarrage de Téléinfo Linky {__version__}')
 
     # Capture élégamment une interruption par CTRL+C
     signal.signal(signal.SIGINT, _handler)
@@ -65,10 +66,12 @@ def main(argv=None):
         sorties.append(SortiePrometheus(config.prometheus, config.location))
     if not sorties:
         logging.info('Aucun envoi configuré : les trames sont lues sans être envoyées')
-    files = [demarrer(sortie) for sortie in sorties]
+    suivi = Suivi()
+    files = [demarrer(sortie, suivi) for sortie in sorties]
 
-    # Lance la boucle infinie de lecture de la téléinfo
-    lire_teleinfo(config, files)
+    # Bilan toutes les 24 heures, puis boucle infinie de lecture de la téléinfo
+    suivi.demarrer()
+    lire_teleinfo(config, files, suivi)
 
 
 if __name__ == '__main__':

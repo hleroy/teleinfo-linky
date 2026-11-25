@@ -22,19 +22,19 @@ class SortieInfluxDB:
             from influxdb_client.client.write_api import SYNCHRONOUS, PointSettings
             from urllib3 import Retry
         except ImportError:
-            logging.error('La bibliothèque influxdb-client est nécessaire pour envoyer les données vers InfluxDB')
+            logging.error('InfluxDB : la bibliothèque influxdb-client est nécessaire pour envoyer les données')
             logging.error('  $ pip install influxdb-client')
             raise SystemExit(1)
 
         self.bucket = config.bucket
 
-        # Connexion à InfluxDB
+        # Création du client : aucune connexion n'est établie avant la première écriture
         try:
-            logging.info(f'Connexion à {config.url}')
+            logging.info(f'InfluxDB : envoi vers {config.url}, bucket {self.bucket}')
             retries = Retry(connect=4, read=2, redirect=5, backoff_factor=0.5)
             client = InfluxDBClient(url=config.url, token=config.token, org=config.org, retries=retries)
         except InfluxDBError as exc:
-            logging.error(f'Erreur de connexion à InfluxDB: {exc}')
+            logging.error(f'InfluxDB : erreur de configuration du client : {exc}')
             raise SystemExit(1)
 
         # Obtention du client d'API en écriture
@@ -43,7 +43,8 @@ class SortieInfluxDB:
         self._write_api = client.write_api(write_options=SYNCHRONOUS, point_settings=point_settings)
 
     def ecrire(self, trames):
-        """Ecrit les trames de façon synchrone. Toutes les erreurs sont temporaires."""
+        """Ecrit les trames de façon synchrone et renvoie leur nombre. Toutes les erreurs sont
+        temporaires."""
         from influxdb_client import Point
         from influxdb_client.client.exceptions import InfluxDBError
         from influxdb_client.rest import ApiException
@@ -55,20 +56,22 @@ class SortieInfluxDB:
             for measure, value in trame.valeurs.items():
                 record.append(Point(measure).field('value', value).time(ftime))
 
-        logging.debug('Ecriture dans InfluxDB')
+        logging.debug('InfluxDB : écriture')
         try:
             self._write_api.write(bucket=self.bucket, record=record)
         except ApiException as exc:
             if exc.status == 404:
-                logging.error(f'Le bucket {self.bucket} n\'existe pas')
-            elif exc.status == 403:
-                logging.error(f'Permissions insuffisantes pour écrire dans {self.bucket}')
+                logging.error(f'InfluxDB : le bucket {self.bucket} n\'existe pas')
+            elif exc.status in (401, 403):
+                logging.error(f'InfluxDB : accès refusé (HTTP {exc.status}) : '
+                              f'vérifiez le token et ses droits sur le bucket {self.bucket}')
             else:
-                logging.error(f'Erreur lors de l\'écriture dans {self.bucket}')
+                logging.error(f'InfluxDB : serveur indisponible (HTTP {exc.status}) : {exc.reason}')
             raise ErreurTemporaire() from exc
         except InfluxDBError as exc:
-            logging.error('Erreur InfluxDB', exc_info=True)
+            logging.error(f'InfluxDB : erreur lors de l\'écriture : {exc}')
             raise ErreurTemporaire() from exc
         except (OSError, HTTPError) as exc:
-            logging.error('Serveur injoignable', exc_info=True)
+            logging.error(f'InfluxDB : serveur injoignable : {exc}')
             raise ErreurTemporaire() from exc
+        return len(trames)

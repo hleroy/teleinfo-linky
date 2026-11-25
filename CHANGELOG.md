@@ -7,6 +7,36 @@ et ce projet adhère à la [gestion sémantique de version](https://semver.org/l
 
 ## [Non publié]
 
+## [1.2.1] - 2026-11-25
+
+### Ajouté
+
+- Le journal confirme que tout fonctionne au démarrage : liste des étiquettes retenues dans la
+  première trame (et de celles qui en sont absentes), puis premier envoi réussi vers InfluxDB et
+  vers Prometheus.
+- Bilan toutes les 24 heures : nombre de trames reçues, et envoyées vers chaque destination. Il
+  passe en avertissement si aucune trame n'a été reçue ou envoyée, avec le nombre de trames en
+  attente, ou si des trames ont été perdues.
+- Avertissement si aucune trame n'est reçue dans la minute qui suit le démarrage (câblage, port
+  série ou mode TIC à vérifier), ou si les trames ne contiennent aucune des étiquettes de
+  `linky.keys`.
+- Message lorsque l'envoi vers InfluxDB ou Prometheus reprend après une erreur.
+
+### Modifié
+
+- Les messages commencent par le nom du composant concerné (`Téléinfo`, `InfluxDB`,
+  `Prometheus`) et sont formulés de la même façon pour InfluxDB et Prometheus. Le message
+  `Connexion à …` d'InfluxDB, trompeur car aucune connexion n'est établie à ce moment, devient
+  `InfluxDB : envoi vers …, bucket …`.
+- InfluxDB : un token refusé (HTTP 401) est signalé comme un accès refusé, comme HTTP 403, et un
+  serveur injoignable n'affiche plus de trace d'exception.
+- Le mode TIC (historique ou standard) est indiqué à l'ouverture du port série.
+
+### Corrigé
+
+- Une fausse première trame, sans aucune étiquette, pouvait être lue au démarrage : un octet mal
+  reçu pendant la synchronisation du port série était pris pour un début de trame.
+
 ## [1.2.0] - 2026-11-24
 
 Cette version s'inspire des forks de [François Charlier](https://github.com/fcharlier) et de
@@ -85,7 +115,8 @@ Cette version s'inspire des forks de [François Charlier](https://github.com/fch
 - Version initiale : lecture de la téléinformation client (TIC) du compteur Linky, envoi vers
   InfluxDB 2.x, service systemd et tableau de bord Grafana.
 
-[Non publié]: https://github.com/hleroy/teleinfo-linky/compare/v1.2.0...HEAD
+[Non publié]: https://github.com/hleroy/teleinfo-linky/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/hleroy/teleinfo-linky/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/hleroy/teleinfo-linky/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/hleroy/teleinfo-linky/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/hleroy/teleinfo-linky/releases/tag/v1.0.0

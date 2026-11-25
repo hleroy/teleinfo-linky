@@ -3,7 +3,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+import logging
+
 from teleinfo_linky.config import Config
+from teleinfo_linky.suivi import Suivi
 from teleinfo_linky.tic import (DELAI_REOUVERTURE, decouper_groupe, lire_teleinfo, lire_trames,
                                  separer_horodatage, verifier_checksum)
 
@@ -226,11 +229,52 @@ def test_port_rouvert_apres_erreur_de_lecture(monkeypatch):
                     stty_port='/dev/ttyAMA0', influxdb=None, prometheus=None)
     file = queue.Queue()
     attentes = []
+    suivi = Suivi()
     with pytest.raises(SystemExit) as exc:
-        lire_teleinfo(config, [file], attendre=attentes.append)
+        lire_teleinfo(config, [file], suivi, attendre=attentes.append)
 
     assert exc.value.code == 1
     assert len(ouvertures) == 3       # deux ouvertures réussies, la troisième échoue
     assert ouvertures[0]['baudrate'] == 1200
     assert attentes == [DELAI_REOUVERTURE, DELAI_REOUVERTURE]
     assert [file.get_nowait().valeurs for _ in range(2)] == [{'BASE': 28563823}] * 2
+    assert suivi._recues == 2
+
+
+def _toutes(flux, etiquettes, methode=1):
+    """Renvoie les valeurs de toutes les trames lues dans le flux."""
+    serie = FausseLiaisonSerie(_lignes(flux))
+    trames = []
+    with pytest.raises(EOFError):
+        for trame in lire_trames(serie, etiquettes, methode):
+            trames.append(trame.valeurs)
+    return trames
+
+
+def test_stx_mal_recu_ignore():
+    """Un octet 0x02 au milieu d'une ligne (UART en cours de synchronisation) n'est pas un début
+    de trame : sinon la fin de la trame en cours formerait une fausse trame vide."""
+    flux = b'IIN\x02T 003 Z\r\nMOTDETAT 000000 B\r\x03' + _trame_brute(['BASE 028563823 0']) + b'\n'
+    assert _toutes(flux, ('BASE',)) == [{'BASE': 28563823}]
+
+
+def test_premiere_trame_annoncee(caplog):
+    caplog.set_level(logging.INFO)
+    groupes = list(GROUPES_HISTORIQUE)
+    groupes[5] = 'IINST 004 Z'  # somme de contrôle erronée : IINST vue mais non retenue
+    _toutes(_trame_brute(groupes) + _trame_brute(groupes) + b'\n', ('BASE', 'IINST', 'ISOUSC', 'ADPS'))
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert messages[1:] == [
+        'Téléinfo : première trame reçue (BASE, ISOUSC)',
+        'Téléinfo : étiquette(s) absente(s) de la trame : ADPS',
+    ]
+
+
+def test_aucune_etiquette_signalee_a_la_deuxieme_trame(caplog):
+    # Étiquettes du mode standard avec un compteur en mode historique
+    flux = _trame_brute(GROUPES_HISTORIQUE) * 3 + b'\n'
+    assert _toutes(flux, ('EAST', 'SINSTS')) == [{}, {}, {}]
+    avertissements = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert avertissements == ['Téléinfo : trames reçues, mais aucune des étiquettes de linky.keys n\'y figure : '
+                              'vérifiez linky.keys et linky.legacy_mode']
+    assert 'première trame reçue' not in caplog.text

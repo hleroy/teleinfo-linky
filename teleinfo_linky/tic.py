@@ -95,20 +95,37 @@ def convertir(etiquette, valeur):
     return int(valeur)
 
 
+def _annoncer_premiere_trame(etiquettes, valeurs, vues):
+    """Indique les étiquettes retenues dans la première trame, et celles qui en sont absentes."""
+    retenues = [e for e in etiquettes if e in valeurs]
+    logging.info(f'Téléinfo : première trame reçue ({", ".join(retenues) or "aucune étiquette retenue"})')
+    absentes = [e for e in etiquettes if e not in vues]
+    if absentes:
+        # Simple information : certaines étiquettes n'apparaissent que par moments (ADPS, PEJP...)
+        logging.info(f'Téléinfo : étiquette(s) absente(s) de la trame : {", ".join(absentes)}')
+
+
 def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(timezone.utc)):
     """Lit les groupes d'information sur ser (objet disposant de readline()) et renvoie les trames.
 
     Générateur infini : chaque trame complète (fin de trame ETX) est renvoyée avec les
     valeurs des étiquettes retenues dont la somme de contrôle est correcte.
     """
-    # Boucle pour partir sur un début de trame
-    logging.info('Attente d\'une première trame...')
+    # Boucle pour partir sur un début de trame. Le STX d'une trame est toujours suivi du LF de
+    # son premier groupe : un octet 0x02 ailleurs dans une ligne est un caractère mal reçu, par
+    # exemple pendant la synchronisation de l'UART à l'ouverture du port.
+    logging.info('Téléinfo : attente de la première trame...')
     line = ser.readline()
-    while START_FRAME not in line:  # Recherche du caractère de début de trame, c'est-à-dire STX 0x02
+    while not line.endswith(START_FRAME + b'\n'):
         line = ser.readline()
 
     valeurs = dict()
+    # Étiquettes de linky.keys présentes dans la trame en cours, même sans valeur retenue
+    vues = set()
     premiere = True
+    # Une première trame sans aucune étiquette de linky.keys peut être tronquée : la suivante
+    # confirme le problème avant de le signaler
+    trame_sans_etiquette = False
     while True:
         line = ser.readline()
         line_str = ''
@@ -126,33 +143,44 @@ def lire_trames(ser, etiquettes, methode_checksum, horloge=lambda: datetime.now(
 
             # Est-ce une étiquette qui nous intéresse ?
             if key in etiquettes:
+                vues.add(key)
                 if verifier_checksum(key, val, separator, checksum, methode_checksum):
                     val = separer_horodatage(val, separator)
                     # Un groupe sans valeur (DATE) ne contient que son horodatage
                     if val:
                         valeurs[key] = convertir(key, val)
                 else:
-                    logging.warning(f'Somme de contrôle erronée pour {key}')
+                    logging.warning(f'Téléinfo : somme de contrôle erronée pour {key}')
 
         except Exception as e:
-            logging.error(f'Une exception s\'est produite : {e}', exc_info=True)
-            logging.error(f'Groupe d\'information : {line_str!r}')
+            # La trace complète n'est utile qu'en mode debug
+            logging.error(f'Téléinfo : groupe d\'information illisible {line_str!r} : {e!r}',
+                          exc_info=logging.getLogger().isEnabledFor(logging.DEBUG))
 
         # Si caractère de fin de trame dans la ligne, la trame est complète
         if STOP_FRAME in line:
             if premiere:
-                logging.info(f'Première trame reçue ({len(valeurs)} étiquette(s) retenue(s))')
-                premiere = False
+                if vues:
+                    _annoncer_premiere_trame(etiquettes, valeurs, vues)
+                    premiere = False
+                elif trame_sans_etiquette:
+                    logging.warning('Téléinfo : trames reçues, mais aucune des étiquettes de linky.keys '
+                                    'n\'y figure : vérifiez linky.keys et linky.legacy_mode')
+                    premiere = False
+                else:
+                    trame_sans_etiquette = True
             logging.debug(f'Trame reçue : {valeurs}')
             yield Trame(horodatage=horloge(), valeurs=valeurs)
             valeurs = dict()
+            vues = set()
 
 
 def _ouvrir_port(config, serial):
     """Ouvre le port série en 7E1. Quitte le programme en cas d'erreur (configuration, droits)."""
     try:
         baudrate = 1200 if config.legacy_mode else 9600
-        logging.info(f'Ouverture du port série {config.stty_port} à {baudrate} Bd')
+        mode = 'historique' if config.legacy_mode else 'standard'
+        logging.info(f'Téléinfo : lecture de {config.stty_port} en mode {mode} ({baudrate} Bd)')
         return serial.Serial(port=config.stty_port,
                              baudrate=baudrate,
                              parity=serial.PARITY_EVEN,
@@ -161,24 +189,24 @@ def _ouvrir_port(config, serial):
                              timeout=1)
 
     except termios.error:
-        logging.error('Erreur lors de la configuration du port série')
+        logging.error(f'Téléinfo : erreur lors de la configuration du port série {config.stty_port}')
         if config.stty_port == '/dev/ttyS0':
-            logging.error('Essayez d\'utiliser /dev/ttyAMA0 plutôt que /dev/ttyS0')
+            logging.error('Téléinfo : essayez d\'utiliser /dev/ttyAMA0 plutôt que /dev/ttyS0')
         raise SystemExit(1)
 
     except serial.SerialException as exc:
         if exc.errno == 13:
-            logging.error('Erreur de permission sur le port série')
-            logging.error('Avez-vous ajouté l\'utilisateur au groupe dialout ?')
+            logging.error(f'Téléinfo : accès refusé au port série {config.stty_port}')
+            logging.error('Téléinfo : avez-vous ajouté l\'utilisateur au groupe dialout ?')
             logging.error('  $ sudo usermod -a -G dialout $USER')
             logging.error(
                 'Vous devez vous déconnecter de votre session puis vous reconnecter pour que les droits prennent effet.')
         else:
-            logging.error(f'Erreur sur le port série : {exc}')
+            logging.error(f'Téléinfo : erreur sur le port série : {exc}')
         raise SystemExit(1)
 
 
-def lire_teleinfo(config, files, attendre=time.sleep):
+def lire_teleinfo(config, files, suivi, attendre=time.sleep):
     """Ouvre le port série et place chaque trame reçue dans chacune des files d'envoi.
 
     Après une erreur de lecture, le port est fermé puis rouvert : les trames en attente
@@ -190,9 +218,10 @@ def lire_teleinfo(config, files, attendre=time.sleep):
         try:
             with _ouvrir_port(config, serial) as ser:
                 for trame in lire_trames(ser, config.keys, config.checksum_method):
+                    suivi.trame_recue()
                     for file in files:
                         file.put(trame)
         except serial.SerialException as exc:
-            logging.error(f'Erreur de lecture sur le port série : {exc}')
-            logging.error(f'Réouverture du port dans {DELAI_REOUVERTURE} secondes')
+            logging.error(f'Téléinfo : erreur de lecture sur le port série : {exc}')
+            logging.error(f'Téléinfo : réouverture du port dans {DELAI_REOUVERTURE} secondes')
             attendre(DELAI_REOUVERTURE)

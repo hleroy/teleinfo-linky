@@ -74,7 +74,7 @@ class SortiePrometheus:
         if config.username:
             identifiants = f'{config.username}:{config.password or ""}'.encode('utf-8')
             self._entetes['Authorization'] = 'Basic ' + base64.b64encode(identifiants).decode('ascii')
-        logging.info(f'Envoi vers Prometheus : {self.url}, toutes les {self.intervalle} secondes')
+        logging.info(f'Prometheus : envoi vers {self.url}, toutes les {self.intervalle} secondes')
 
     def series(self, trames):
         """Regroupe les valeurs des trames en séries remote write.
@@ -101,7 +101,8 @@ class SortiePrometheus:
         return series
 
     def ecrire(self, trames):
-        """Envoie les trames en une requête.
+        """Envoie les trames en une requête et renvoie le nombre de trames envoyées, sans celles
+        qui étaient trop anciennes.
 
         Erreur temporaire (lot conservé) : serveur injoignable, HTTP 5xx, 429, 401, 403 et
         redirections (3xx), qui demandent de corriger la configuration.
@@ -111,32 +112,34 @@ class SortiePrometheus:
         maintenant = self._horloge()
         recentes = [t for t in trames if maintenant - t.horodatage.timestamp() <= AGE_MAX]
         if len(recentes) < len(trames):
-            logging.warning(f'{len(trames) - len(recentes)} trame(s) de plus de {AGE_MAX // 60} minutes '
-                            'ignorée(s) : Prometheus les refuserait')
+            logging.warning(f'Prometheus : {len(trames) - len(recentes)} trame(s) de plus de {AGE_MAX // 60} '
+                            'minutes ignorée(s) : Prometheus les refuserait')
         if not recentes:
-            return
+            return 0
 
         corps = compresser_snappy(encoder_write_request(self.series(recentes)))
         requete = urllib.request.Request(self.url, data=corps, headers=self._entetes, method='POST')
 
-        logging.debug(f'Ecriture dans Prometheus ({len(recentes)} trame(s))')
+        logging.debug(f'Prometheus : écriture de {len(recentes)} trame(s)')
         try:
             with self._ouvrir(requete, timeout=TIMEOUT) as reponse:
                 reponse.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read(500).decode('utf-8', 'replace').strip()
+            suite = f' : {detail}' if detail else ''
             if 300 <= exc.code < 400:
-                logging.error(f'Prometheus redirige la requête (HTTP {exc.code}) vers '
+                logging.error(f'Prometheus : requête redirigée (HTTP {exc.code}) vers '
                               f'{exc.headers.get("Location")} : indiquez cette adresse dans prometheus.url')
                 raise ErreurTemporaire() from exc
             if exc.code in (401, 403):
-                logging.error(f'Accès refusé par Prometheus (HTTP {exc.code}) : '
+                logging.error(f'Prometheus : accès refusé (HTTP {exc.code}) : '
                               'vérifiez les identifiants ou la liste d\'adresses IP autorisées')
                 raise ErreurTemporaire() from exc
             if exc.code == 429 or exc.code >= 500:
-                logging.error(f'Prometheus indisponible (HTTP {exc.code}) : {detail}')
+                logging.error(f'Prometheus : serveur indisponible (HTTP {exc.code}){suite}')
                 raise ErreurTemporaire() from exc
-            raise ErreurDefinitive(f'HTTP {exc.code} : {detail}') from exc
+            raise ErreurDefinitive(f'HTTP {exc.code}{suite}') from exc
         except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
-            logging.error(f'Serveur Prometheus injoignable : {exc}')
+            logging.error(f'Prometheus : serveur injoignable : {exc}')
             raise ErreurTemporaire() from exc
+        return len(recentes)

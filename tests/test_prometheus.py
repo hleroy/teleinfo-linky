@@ -62,7 +62,7 @@ def _trames():
 
 
 def test_envoi_reussi(serveur):
-    _sortie(serveur.url).ecrire(_trames())
+    assert _sortie(serveur.url).ecrire(_trames()) == 2
 
     chemin, entetes, corps = serveur.requetes[0]
     assert chemin == '/api/v1/write'
@@ -119,18 +119,20 @@ def test_location_numerique_ou_vide(serveur, location, attendu):
     assert dict(series[0][0])['location'] == attendu
 
 
-def test_serveur_injoignable():
+def test_serveur_injoignable(caplog):
     with pytest.raises(ErreurTemporaire):
         _sortie('http://127.0.0.1:9/api/v1/write').ecrire(_trames())
+    assert 'Prometheus : serveur injoignable' in caplog.text
 
 
 def test_trames_trop_anciennes_ignorees(serveur, caplog):
     anciennes = [Trame(MAINTENANT - timedelta(hours=2), {'BASE': 1})]
-    _sortie(serveur.url).ecrire(anciennes)
+    assert _sortie(serveur.url).ecrire(anciennes) == 0
     assert serveur.requetes == []
-    assert '1 trame(s) de plus de 50 minutes ignorée(s)' in caplog.text
+    assert 'Prometheus : 1 trame(s) de plus de 50 minutes ignorée(s)' in caplog.text
 
-    _sortie(serveur.url).ecrire(anciennes + _trames())
+    # Seules les trames envoyées sont comptées
+    assert _sortie(serveur.url).ecrire(anciennes + _trames()) == 2
     assert len(serveur.requetes) == 1
 
 

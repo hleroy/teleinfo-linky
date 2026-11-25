@@ -14,6 +14,7 @@ Layout:
   - `config.py`: loads and validates `config.yml` into frozen dataclasses.
   - `tic.py`: the serial port, plus pure parsing functions (`decouper_groupe`, `verifier_checksum`, `lire_trames`).
   - `envoi.py`: the generic retry loop.
+  - `suivi.py`: frame counters shared by the threads, and the heartbeat logged every 24 hours.
   - `sorties/influxdb.py`, `sorties/prometheus.py`, `sorties/remote_write.py`: the two outputs and the remote-write encoder.
 - `linky.py`: a compatibility launcher for 1.0.0 installs, whose systemd unit runs `/usr/bin/python3 ~/linky/linky.py`.
 - `linky.service`: a systemd **user** unit using `%h/linky/.venv/bin/teleinfo-linky`.
@@ -39,6 +40,8 @@ shellcheck install.sh
 - `python -m teleinfo_linky` (or `teleinfo-linky`) reads `config.yml` from the **current directory** unless `--config` is given.
 - With `send_data: false` in both `influxdb` and `prometheus`, frames are parsed but not sent.
 - With `debug: true`, every raw information group is logged. Messages emitted on every frame (frame received, writes) are at debug level too, so the journal stays quiet at info level.
+- Every log message starts with its component: `Téléinfo : …`, `InfluxDB : …` or `Prometheus : …` (`{sortie.nom} : …` in `envoi.py`). Word the two outputs' messages the same way (`envoi vers`, `accès refusé (HTTP x)`, `serveur indisponible (HTTP x)`, `serveur injoignable`). Configuration errors at startup keep no prefix.
+- What a user sees at info level: the startup lines, the first frame's labels (and the missing ones), each output's first successful send, `envoi rétabli` after errors, and the heartbeat. Keep it to that.
 - Log lines carry a timestamp unless stderr goes to journald, which already timestamps them. The check compares `JOURNAL_STREAM` with stderr's device:inode, because desktop sessions export `JOURNAL_STREAM` to every program they start.
 - `lire_trames()` takes any object with `readline()`, so the parser is tested without serial hardware (see `tests/test_tic.py`).
 - For an end-to-end run, use a `socat` pty pair with a script that writes frames.
@@ -51,16 +54,21 @@ shellcheck install.sh
 
 - **Main thread** (`tic.lire_teleinfo`):
   - opens the serial port in 7E1, at 1200 baud if `linky.legacy_mode` is true (historique) and 9600 otherwise (standard);
-  - waits for STX (`0x02`), then reads one information group per line;
+  - waits for a line that **ends** with STX + LF (a real STX is always followed by the first group's LF; a stray `0x02` in a line is a garbled byte read while the UART syncs, which used to produce a fake empty first frame), then reads one information group per line;
   - strips only CR, LF, ETX and STX from each line. Never use a bare `rstrip()`: the checksum can be a space;
   - detects the separator (SP or HT) from the second-to-last character, and keeps the value of labels that are in `linky.keys` and whose checksum passes: a string with padding spaces stripped for labels in `ETIQUETTES_TEXTE`, `int()` otherwise;
   - in standard mode, a timestamped group (label HT date HT value HT checksum) is checksummed whole, then `separer_horodatage` drops the date. `DATE` has no value and is skipped;
   - on ETX, builds an immutable `Trame` (UTC datetime and values) and puts it on **each output's own queue**;
+  - logs the first frame's retained labels and the `linky.keys` labels missing from it (info only, some labels are intermittent). If no `linky.keys` label appears in the first two frames, it logs a warning (the first frame may be truncated);
   - on a `SerialException` while reading, closes the port and reopens it after 10 s, so queued frames survive. An error while opening the port (permissions, `termios.error`) exits the program; `linky.service` restarts it after `RestartSec=10`.
 - **Output threads** (`envoi.boucle_envoi`): one per enabled output.
-  - An output's `ecrire(lot)` raises `ErreurTemporaire` (the batch is retried with backoff of 2^x s, capped at 2^10) or `ErreurDefinitive` (the batch is dropped).
+  - An output's `ecrire(lot)` returns the number of frames written (Prometheus leaves out frames that are too old), or raises `ErreurTemporaire` (the batch is retried with backoff of 2^x s, capped at 2^10) or `ErreurDefinitive` (the batch is dropped).
   - Any unexpected exception is treated as temporary.
-  - Each queue is an `envoi.FileBornee` whose size is the output's `taille_max_file` (0 means unbounded). When full, it drops the oldest frame, so `put()` never blocks the serial loop.
+  - Each queue is an `envoi.FileBornee` whose size is the output's `taille_max_file` (0 means unbounded). When full, it drops the oldest frame and counts it in `ecartees`, so `put()` never blocks the serial loop.
+  - The first successful batch is logged once (`premier envoi réussi`), and a success after errors is logged as `envoi rétabli`.
+- **Heartbeat** (`suivi.Suivi`, a daemon thread): it counts the frames received, and the frames sent and lost by each output. Lost frames are the ones abandoned on a definitive error, dropped by `FileBornee`, or too old for Prometheus.
+  - After 60 s, it warns if no frame has arrived yet.
+  - Every 24 h, it logs one line per component and resets the counters. A line goes up to WARNING when nothing was received, when an output sent nothing (the line then shows its backlog), or when frames were lost.
 - **InfluxDB** (`SortieInfluxDB`):
   - one synchronous write per frame;
   - each TIC label is a *measurement*, with a single field `value` and a default tag `location`;

@@ -146,6 +146,23 @@ Vérifiez que le service est bien démarré et qu'il n'y a pas d'erreur dans les
     $ systemctl --user status linky
     $ journalctl --user-unit linky
 
+Au démarrage, le journal confirme la lecture des trames et le premier envoi vers chaque destination :
+
+    INFO: Démarrage de Téléinfo Linky 1.2.1
+    INFO: InfluxDB : envoi vers https://influxdb.example.com, bucket teleinfo
+    INFO: Prometheus : envoi vers https://prometheus.example.com/api/v1/write, toutes les 10 secondes
+    INFO: Téléinfo : lecture de /dev/ttyAMA0 en mode historique (1200 Bd)
+    INFO: Téléinfo : attente de la première trame...
+    INFO: Téléinfo : première trame reçue (ISOUSC, BASE, IINST)
+    INFO: InfluxDB : premier envoi réussi
+    INFO: Prometheus : premier envoi réussi (7 trames)
+
+Le journal reste ensuite silencieux, sauf en cas d'erreur, et un bilan confirme toutes les 24 heures que le programme fonctionne toujours :
+
+    INFO: Téléinfo : 57 412 trames reçues pendant les dernières 24 heures
+    INFO: InfluxDB : 57 412 trames envoyées pendant les dernières 24 heures
+    INFO: Prometheus : 57 412 trames envoyées pendant les dernières 24 heures
+
 Puis activez le service (la deuxième commande permet le démarrage automatique des instances utilisateur de systemd)
 
     $ systemctl --user enable linky

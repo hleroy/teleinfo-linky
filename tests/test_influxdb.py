@@ -72,7 +72,7 @@ def _trame():
 
 
 def test_requete_ecriture(serveur):
-    _sortie(serveur.url).ecrire([_trame()])
+    assert _sortie(serveur.url).ecrire([_trame()]) == 1
 
     assert len(serveur.requetes) == 1
     chemin, entetes, corps = serveur.requetes[0]
@@ -111,11 +111,11 @@ def test_une_ecriture_par_trame():
 
 
 @pytest.mark.parametrize('code,message', [
-    (404, "Le bucket teleinfo n'existe pas"),
-    (403, 'Permissions insuffisantes pour écrire dans teleinfo'),
-    (401, "Erreur lors de l'écriture dans teleinfo"),
-    (500, "Erreur lors de l'écriture dans teleinfo"),
-    (503, "Erreur lors de l'écriture dans teleinfo"),
+    (404, "InfluxDB : le bucket teleinfo n'existe pas"),
+    (403, 'InfluxDB : accès refusé (HTTP 403) : vérifiez le token et ses droits sur le bucket teleinfo'),
+    (401, 'InfluxDB : accès refusé (HTTP 401) : vérifiez le token et ses droits sur le bucket teleinfo'),
+    (500, 'InfluxDB : serveur indisponible (HTTP 500)'),
+    (503, 'InfluxDB : serveur indisponible (HTTP 503)'),
 ])
 def test_erreurs_http_temporaires(serveur, caplog, code, message):
     """Aucune erreur n'est définitive : la trame est conservée et l'écriture recommencée."""
@@ -130,14 +130,14 @@ def test_serveur_injoignable(monkeypatch, caplog):
     monkeypatch.setattr('urllib3.util.retry.time.sleep', lambda s: None)
     with pytest.raises(ErreurTemporaire):
         _sortie('http://127.0.0.1:9').ecrire([_trame()])
-    assert 'Serveur injoignable' in caplog.text
+    assert 'InfluxDB : serveur injoignable' in caplog.text
 
 
 def test_trame_conservee_jusqu_au_retour_du_serveur(serveur):
     """Avec la boucle d'envoi, la trame est réécrite après les erreurs, sans être perdue."""
     serveur.codes = [503, 500]
     attentes = []
-    assert envoyer(_sortie(serveur.url), [_trame()], attendre=attentes.append) is True
+    assert envoyer(_sortie(serveur.url), [_trame()], attendre=attentes.append) == 1
 
     assert attentes == [1, 2]
     assert len(serveur.requetes) == 3
